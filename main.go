@@ -45,6 +45,12 @@ func main() {
 		log.Println("Seeder selesai dijalankan")
 		return
 	}
+	jwksURL := os.Getenv("KEYCLOAK_JWKS_URL") // e.g. https://keycloak.local/realms/myrealm/protocol/openid-connect/certs
+	erru := middleware.InitJWKS(jwksURL)
+	if erru != nil {
+		log.Fatalf("Failed to initialize JWKS: %v", err)
+	}
+
 	// Initialize dan jalankan server
 	server := InitializeServer()
 	log.Printf("Server berjalan di %s", server.Addr)
