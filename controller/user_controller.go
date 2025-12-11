@@ -16,4 +16,5 @@ type UserController interface {
 	FindByKodeOpdAndRole(writer http.ResponseWriter, request *http.Request, params httprouter.Params)
 	FindByNip(writer http.ResponseWriter, request *http.Request, params httprouter.Params)
 	CekAdminOpd(writer http.ResponseWriter, request *http.Request, params httprouter.Params)
+	ChangePassword(writer http.ResponseWriter, request *http.Request, params httprouter.Params)
 }

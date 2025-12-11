@@ -146,23 +146,41 @@ func (controller *RencanaKinerjaControllerImpl) Delete(writer http.ResponseWrite
 }
 
 func (controller *RencanaKinerjaControllerImpl) FindAllRencanaKinerja(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
-	pegawaiId := params.ByName("pegawai_id")
+	// Ambil claims dari context untuk validasi role
+	claims, ok := helper.GetUserClaimsFromContext(request.Context())
+	if !ok {
+		webResponse := web.WebResponse{
+			Code:   http.StatusUnauthorized,
+			Status: "UNAUTHORIZED",
+			Data:   "Token tidak valid",
+		}
+		helper.WriteToResponseBody(writer, webResponse)
+		return
+	}
 
+	pegawaiId := params.ByName("pegawai_id")
 	query := request.URL.Query()
 	kodeOpd := query.Get("kode_opd")
 	tahun := query.Get("tahun")
 
-	// Membuat map untuk menyimpan parameter opsional
-	filterParams := make(map[string]string)
+	// Validasi dan filter berdasarkan role
+	isSuperAdmin := helper.HasRole(claims, helper.RoleSuperAdmin)
+	isAdminOpd := helper.HasRole(claims, helper.RoleAdminOpd)
 
-	if pegawaiId != "" {
-		filterParams["pegawai_id"] = pegawaiId
-	}
-	if kodeOpd != "" {
-		filterParams["kode_opd"] = kodeOpd
-	}
-	if tahun != "" {
-		filterParams["tahun"] = tahun
+	if isSuperAdmin {
+		// Super admin: bebas akses, gunakan parameter asli
+		// Tidak perlu override parameter
+	} else if isAdminOpd {
+		// Admin OPD: filter berdasarkan kode_opd dari token
+		kodeOpd = claims.KodeOpd
+		// Reset pegawaiId karena admin_opd melihat semua pegawai di OPD mereka
+		pegawaiId = ""
+	} else {
+		// Role lain (bukan super_admin dan bukan admin_opd): filter berdasarkan NIP dari token
+		// NIP dari token digunakan sebagai pegawaiId
+		pegawaiId = claims.Nip
+		// Reset kodeOpd karena user biasa hanya melihat data mereka sendiri
+		kodeOpd = ""
 	}
 
 	rencanaKinerjaResponses, err := controller.rencanaKinerjaService.FindAll(request.Context(), pegawaiId, kodeOpd, tahun)

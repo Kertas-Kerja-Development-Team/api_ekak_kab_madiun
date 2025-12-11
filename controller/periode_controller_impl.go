@@ -20,6 +20,10 @@ func NewPeriodeControllerImpl(periodeService service.PeriodeService) *PeriodeCon
 }
 
 func (controller *PeriodeControllerImpl) Create(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	periodeCreateRequest := periodetahun.PeriodeCreateRequest{}
 	helper.ReadFromRequestBody(request, &periodeCreateRequest)
 
@@ -43,6 +47,10 @@ func (controller *PeriodeControllerImpl) Create(writer http.ResponseWriter, requ
 }
 
 func (controller *PeriodeControllerImpl) Update(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	periodeUpdateRequest := periodetahun.PeriodeUpdateRequest{}
 	helper.ReadFromRequestBody(request, &periodeUpdateRequest)
 	id := params.ByName("id")
@@ -131,6 +139,10 @@ func (controller *PeriodeControllerImpl) FindById(writer http.ResponseWriter, re
 }
 
 func (controller *PeriodeControllerImpl) Delete(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	id := params.ByName("id")
 	idInt, _ := strconv.Atoi(id)
 	err := controller.PeriodeService.Delete(request.Context(), idInt)

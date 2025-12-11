@@ -3823,12 +3823,10 @@ type ControlPokinLevel struct {
 func (repository *PohonKinerjaRepositoryImpl) ControlPokinOpdByLevel(ctx context.Context, tx *sql.Tx, kodeOpd, tahun string) (map[int]ControlPokinLevel, error) {
 	query := `
 		WITH RECURSIVE valid_pokin AS (
-			-- ✅ BASE CASE: Strategic (level 4) dengan parent = 0 atau parent level 0-3
+			-- BASE CASE: Strategic (level 4)
 			SELECT 
 				pk.id,
-				pk.level_pohon,
-				pk.parent,
-				pk.tahun
+				pk.level_pohon
 			FROM tb_pohon_kinerja pk
 			WHERE pk.kode_opd = ? 
 			AND pk.tahun = ?
@@ -3836,87 +3834,70 @@ func (repository *PohonKinerjaRepositoryImpl) ControlPokinOpdByLevel(ctx context
 			AND pk.status NOT IN ('menunggu_disetujui', 'tarik pokin opd', 'disetujui', 'ditolak', 'crosscutting_menunggu', 'crosscutting_ditolak')
 			AND (
 				pk.parent = 0 
-				OR EXISTS (
-					-- Parent adalah level 0-3 (tematik dari tahun berbeda)
-					SELECT 1 FROM tb_pohon_kinerja p2 
-					WHERE p2.id = pk.parent 
-					AND p2.level_pohon BETWEEN 0 AND 3
+				OR pk.parent IN (
+					SELECT id FROM tb_pohon_kinerja 
+					WHERE level_pohon BETWEEN 0 AND 3
 				)
 			)
 			
 			UNION ALL
 			
-			-- ✅ RECURSIVE: Level 5+ harus punya parent valid dengan tahun yang sama
+			-- RECURSIVE: Level 5+
 			SELECT 
 				child.id,
-				child.level_pohon,
-				child.parent,
-				child.tahun
+				child.level_pohon
 			FROM tb_pohon_kinerja child
 			INNER JOIN valid_pokin vp ON child.parent = vp.id
 			WHERE child.kode_opd = ?
 			AND child.tahun = ?
 			AND child.level_pohon > 4
 			AND child.status NOT IN ('menunggu_disetujui', 'tarik pokin opd', 'disetujui', 'ditolak', 'crosscutting_menunggu', 'crosscutting_ditolak')
-			-- ✅ PENTING: Parent harus tahun yang sama
-			AND child.tahun = vp.tahun
 		),
-		pokin_pelaksana AS (
+		-- ✅ OPTIMASI: Pre-materialize pelaksana untuk menghindari subquery berulang
+		pelaksana_nip AS (
+			SELECT DISTINCT
+				pp.pohon_kinerja_id,
+				pg.nip
+			FROM tb_pelaksana_pokin pp
+			INNER JOIN tb_pegawai pg ON pp.pegawai_id = pg.id
+			WHERE pp.pohon_kinerja_id IN (SELECT id FROM valid_pokin)
+		),
+		-- ✅ OPTIMASI: Gabungkan perhitungan pelaksana dan rencana kinerja
+		pokin_stats AS (
 			SELECT 
 				vp.level_pohon,
-				COUNT(DISTINCT vp.id) as total_pokin,
-				COUNT(DISTINCT pp.pegawai_id) as total_pelaksana,
-				COUNT(DISTINCT CASE WHEN pp.pegawai_id IS NOT NULL THEN vp.id END) as pokin_ada_pelaksana
-			FROM valid_pokin vp
-			LEFT JOIN tb_pelaksana_pokin pp ON vp.id = pp.pohon_kinerja_id
-			GROUP BY vp.level_pohon
-		),
-		pokin_rekin AS (
-			SELECT 
-				vp.level_pohon,
-				-- Total rencana kinerja yang pegawai-nya adalah pelaksana pohon kinerja
+				vp.id as pokin_id,
+				COUNT(DISTINCT pn.nip) as cnt_pelaksana,
+				CASE WHEN COUNT(DISTINCT pn.nip) > 0 THEN 1 ELSE 0 END as has_pelaksana,
+				-- Check apakah ada rekin yang valid (pegawai = pelaksana)
 				COUNT(DISTINCT CASE 
-					WHEN rk.id IS NOT NULL 
-					AND EXISTS (
-						SELECT 1 
-						FROM tb_pelaksana_pokin pp2 
-						INNER JOIN tb_pegawai pg ON pp2.pegawai_id = pg.id
-						WHERE pp2.pohon_kinerja_id = vp.id 
-						AND pg.nip = rk.pegawai_id
-					) 
+					WHEN rk.id IS NOT NULL AND rk.pegawai_id = pn.nip 
 					THEN rk.id 
-				END) as total_rencana_kinerja,
-				-- Pokin yang punya minimal 1 rencana kinerja (dari pelaksananya)
-				COUNT(DISTINCT CASE 
-					WHEN EXISTS (
-						SELECT 1 
-						FROM tb_rencana_kinerja rk2
-						INNER JOIN tb_pelaksana_pokin pp3 ON pp3.pohon_kinerja_id = vp.id
-						INNER JOIN tb_pegawai pg2 ON pp3.pegawai_id = pg2.id
-						WHERE rk2.id_pohon = vp.id 
-						AND pg2.nip = rk2.pegawai_id
-					) 
-					THEN vp.id 
-				END) as pokin_ada_rekin_pelaksana
+				END) as cnt_rekin,
+				-- Check apakah pokin punya minimal 1 rekin valid
+				MAX(CASE 
+					WHEN rk.id IS NOT NULL AND rk.pegawai_id = pn.nip 
+					THEN 1 ELSE 0 
+				END) as has_rekin
 			FROM valid_pokin vp
-			LEFT JOIN tb_rencana_kinerja rk ON vp.id = rk.id_pohon
-			GROUP BY vp.level_pohon
+			LEFT JOIN pelaksana_nip pn ON vp.id = pn.pohon_kinerja_id
+			LEFT JOIN tb_rencana_kinerja rk ON vp.id = rk.id_pohon AND rk.pegawai_id = pn.nip
+			GROUP BY vp.level_pohon, vp.id
 		)
 		SELECT 
-			pp.level_pohon,
-			pp.total_pokin as jumlah_pokin,
-			pp.total_pelaksana as jumlah_pelaksana,
-			pp.pokin_ada_pelaksana as jumlah_pokin_ada_pelaksana,
-			(pp.total_pokin - pp.pokin_ada_pelaksana) as jumlah_pokin_tanpa_pelaksana,
-			COALESCE(pr.total_rencana_kinerja, 0) as jumlah_rencana_kinerja,
-			COALESCE(pr.pokin_ada_rekin_pelaksana, 0) as jumlah_pokin_ada_rekin,
-			(pp.total_pokin - COALESCE(pr.pokin_ada_rekin_pelaksana, 0)) as jumlah_pokin_tanpa_rekin
-		FROM pokin_pelaksana pp
-		LEFT JOIN pokin_rekin pr ON pp.level_pohon = pr.level_pohon
-		ORDER BY pp.level_pohon
+			level_pohon,
+			COUNT(*) as jumlah_pokin,
+			SUM(cnt_pelaksana) as jumlah_pelaksana,
+			SUM(has_pelaksana) as jumlah_pokin_ada_pelaksana,
+			COUNT(*) - SUM(has_pelaksana) as jumlah_pokin_tanpa_pelaksana,
+			SUM(cnt_rekin) as jumlah_rencana_kinerja,
+			SUM(has_rekin) as jumlah_pokin_ada_rekin,
+			COUNT(*) - SUM(has_rekin) as jumlah_pokin_tanpa_rekin
+		FROM pokin_stats
+		GROUP BY level_pohon
+		ORDER BY level_pohon
 	`
 
-	// ✅ PARAMETER: kodeOpd, tahun (untuk base case), kodeOpd, tahun (untuk recursive)
 	rows, err := tx.QueryContext(ctx, query, kodeOpd, tahun, kodeOpd, tahun)
 	if err != nil {
 		return nil, fmt.Errorf("gagal mengambil data control pokin: %w", err)
@@ -3948,6 +3929,135 @@ func (repository *PohonKinerjaRepositoryImpl) ControlPokinOpdByLevel(ctx context
 
 	return result, nil
 }
+
+// func (repository *PohonKinerjaRepositoryImpl) ControlPokinOpdByLevel(ctx context.Context, tx *sql.Tx, kodeOpd, tahun string) (map[int]ControlPokinLevel, error) {
+// 	query := `
+// 		WITH RECURSIVE valid_pokin AS (
+// 			-- ✅ BASE CASE: Strategic (level 4) dengan parent = 0 atau parent level 0-3
+// 			SELECT
+// 				pk.id,
+// 				pk.level_pohon,
+// 				pk.parent,
+// 				pk.tahun
+// 			FROM tb_pohon_kinerja pk
+// 			WHERE pk.kode_opd = ?
+// 			AND pk.tahun = ?
+// 			AND pk.level_pohon = 4
+// 			AND pk.status NOT IN ('menunggu_disetujui', 'tarik pokin opd', 'disetujui', 'ditolak', 'crosscutting_menunggu', 'crosscutting_ditolak')
+// 			AND (
+// 				pk.parent = 0
+// 				OR EXISTS (
+// 					-- Parent adalah level 0-3 (tematik dari tahun berbeda)
+// 					SELECT 1 FROM tb_pohon_kinerja p2
+// 					WHERE p2.id = pk.parent
+// 					AND p2.level_pohon BETWEEN 0 AND 3
+// 				)
+// 			)
+
+// 			UNION ALL
+
+// 			-- ✅ RECURSIVE: Level 5+ harus punya parent valid dengan tahun yang sama
+// 			SELECT
+// 				child.id,
+// 				child.level_pohon,
+// 				child.parent,
+// 				child.tahun
+// 			FROM tb_pohon_kinerja child
+// 			INNER JOIN valid_pokin vp ON child.parent = vp.id
+// 			WHERE child.kode_opd = ?
+// 			AND child.tahun = ?
+// 			AND child.level_pohon > 4
+// 			AND child.status NOT IN ('menunggu_disetujui', 'tarik pokin opd', 'disetujui', 'ditolak', 'crosscutting_menunggu', 'crosscutting_ditolak')
+// 			-- ✅ PENTING: Parent harus tahun yang sama
+// 			AND child.tahun = vp.tahun
+// 		),
+// 		pokin_pelaksana AS (
+// 			SELECT
+// 				vp.level_pohon,
+// 				COUNT(DISTINCT vp.id) as total_pokin,
+// 				COUNT(DISTINCT pp.pegawai_id) as total_pelaksana,
+// 				COUNT(DISTINCT CASE WHEN pp.pegawai_id IS NOT NULL THEN vp.id END) as pokin_ada_pelaksana
+// 			FROM valid_pokin vp
+// 			LEFT JOIN tb_pelaksana_pokin pp ON vp.id = pp.pohon_kinerja_id
+// 			GROUP BY vp.level_pohon
+// 		),
+// 		pokin_rekin AS (
+// 			SELECT
+// 				vp.level_pohon,
+// 				-- Total rencana kinerja yang pegawai-nya adalah pelaksana pohon kinerja
+// 				COUNT(DISTINCT CASE
+// 					WHEN rk.id IS NOT NULL
+// 					AND EXISTS (
+// 						SELECT 1
+// 						FROM tb_pelaksana_pokin pp2
+// 						INNER JOIN tb_pegawai pg ON pp2.pegawai_id = pg.id
+// 						WHERE pp2.pohon_kinerja_id = vp.id
+// 						AND pg.nip = rk.pegawai_id
+// 					)
+// 					THEN rk.id
+// 				END) as total_rencana_kinerja,
+// 				-- Pokin yang punya minimal 1 rencana kinerja (dari pelaksananya)
+// 				COUNT(DISTINCT CASE
+// 					WHEN EXISTS (
+// 						SELECT 1
+// 						FROM tb_rencana_kinerja rk2
+// 						INNER JOIN tb_pelaksana_pokin pp3 ON pp3.pohon_kinerja_id = vp.id
+// 						INNER JOIN tb_pegawai pg2 ON pp3.pegawai_id = pg2.id
+// 						WHERE rk2.id_pohon = vp.id
+// 						AND pg2.nip = rk2.pegawai_id
+// 					)
+// 					THEN vp.id
+// 				END) as pokin_ada_rekin_pelaksana
+// 			FROM valid_pokin vp
+// 			LEFT JOIN tb_rencana_kinerja rk ON vp.id = rk.id_pohon
+// 			GROUP BY vp.level_pohon
+// 		)
+// 		SELECT
+// 			pp.level_pohon,
+// 			pp.total_pokin as jumlah_pokin,
+// 			pp.total_pelaksana as jumlah_pelaksana,
+// 			pp.pokin_ada_pelaksana as jumlah_pokin_ada_pelaksana,
+// 			(pp.total_pokin - pp.pokin_ada_pelaksana) as jumlah_pokin_tanpa_pelaksana,
+// 			COALESCE(pr.total_rencana_kinerja, 0) as jumlah_rencana_kinerja,
+// 			COALESCE(pr.pokin_ada_rekin_pelaksana, 0) as jumlah_pokin_ada_rekin,
+// 			(pp.total_pokin - COALESCE(pr.pokin_ada_rekin_pelaksana, 0)) as jumlah_pokin_tanpa_rekin
+// 		FROM pokin_pelaksana pp
+// 		LEFT JOIN pokin_rekin pr ON pp.level_pohon = pr.level_pohon
+// 		ORDER BY pp.level_pohon
+// 	`
+
+// 	// ✅ PARAMETER: kodeOpd, tahun (untuk base case), kodeOpd, tahun (untuk recursive)
+// 	rows, err := tx.QueryContext(ctx, query, kodeOpd, tahun, kodeOpd, tahun)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("gagal mengambil data control pokin: %w", err)
+// 	}
+// 	defer rows.Close()
+
+// 	result := make(map[int]ControlPokinLevel)
+// 	for rows.Next() {
+// 		var data ControlPokinLevel
+// 		err := rows.Scan(
+// 			&data.LevelPohon,
+// 			&data.JumlahPokin,
+// 			&data.JumlahPelaksana,
+// 			&data.JumlahPokinAdaPelaksana,
+// 			&data.JumlahPokinTanpaPelaksana,
+// 			&data.JumlahRencanaKinerja,
+// 			&data.JumlahPokinAdaRekin,
+// 			&data.JumlahPokinTanpaRekin,
+// 		)
+// 		if err != nil {
+// 			return nil, fmt.Errorf("gagal scan data: %w", err)
+// 		}
+// 		result[data.LevelPohon] = data
+// 	}
+
+// 	if err := rows.Err(); err != nil {
+// 		return nil, fmt.Errorf("error iterating rows: %w", err)
+// 	}
+
+// 	return result, nil
+// }
 
 type LeaderboardOpdData struct {
 	KodeOpd             string

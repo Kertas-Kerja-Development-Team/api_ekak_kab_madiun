@@ -191,7 +191,11 @@ func (controller *SubKegiatanTerpilihControllerImpl) UpdateOpd(writer http.Respo
 }
 
 func (controller *SubKegiatanTerpilihControllerImpl) FindAllOpd(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
-	kodeOpd := params.ByName("kode_opd")
+	claims, ok := helper.CheckSuperAdminOrAdminOpdRole(writer, request)
+	if !ok {
+		return
+	}
+	kodeOpd := helper.GetFilteredKodeOpd(claims, params.ByName("kode_opd"))
 	tahun := params.ByName("tahun")
 
 	var kodeOpdPtr *string

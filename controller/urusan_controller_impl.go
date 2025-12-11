@@ -21,6 +21,9 @@ func NewUrusanControllerImpl(urusanService service.UrusanService) *UrusanControl
 }
 
 func (controller *UrusanControllerImpl) Create(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	urusanCreateRequest := urusanrespon.UrusanCreateRequest{}
 	helper.ReadFromRequestBody(request, &urusanCreateRequest)
 
@@ -44,6 +47,9 @@ func (controller *UrusanControllerImpl) Create(writer http.ResponseWriter, reque
 }
 
 func (controller *UrusanControllerImpl) Update(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	urusanUpdateRequest := urusanrespon.UrusanUpdateRequest{}
 	helper.ReadFromRequestBody(request, &urusanUpdateRequest)
 
@@ -69,6 +75,9 @@ func (controller *UrusanControllerImpl) Update(writer http.ResponseWriter, reque
 }
 
 func (controller *UrusanControllerImpl) FindById(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	id := params.ByName("id")
 
 	urusanResponse, err := controller.UrusanService.FindById(request.Context(), id)
@@ -91,6 +100,9 @@ func (controller *UrusanControllerImpl) FindById(writer http.ResponseWriter, req
 }
 
 func (controller *UrusanControllerImpl) FindAll(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	urusanResponses, err := controller.UrusanService.FindAll(request.Context())
 	if err != nil {
 		webResponse := web.WebResponse{
@@ -111,6 +123,9 @@ func (controller *UrusanControllerImpl) FindAll(writer http.ResponseWriter, requ
 }
 
 func (controller *UrusanControllerImpl) Delete(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	id := params.ByName("id")
 
 	err := controller.UrusanService.Delete(request.Context(), id)
@@ -132,7 +147,12 @@ func (controller *UrusanControllerImpl) Delete(writer http.ResponseWriter, reque
 }
 
 func (controller *UrusanControllerImpl) FindByKodeOpd(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
-	kodeOpd := params.ByName("kode_opd")
+	claims, ok := helper.CheckSuperAdminOrAdminOpdRole(writer, request)
+	if !ok {
+		return
+	}
+
+	kodeOpd := helper.GetFilteredKodeOpd(claims, params.ByName("kode_opd"))
 
 	urusanResponses, err := controller.UrusanService.FindByKodeOpd(request.Context(), kodeOpd)
 	if err != nil {
@@ -154,7 +174,12 @@ func (controller *UrusanControllerImpl) FindByKodeOpd(writer http.ResponseWriter
 }
 
 func (controller *UrusanControllerImpl) FindUrusanAndBidangByKodeOpd(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
-	kodeOpd := params.ByName("kode_opd")
+	claims, ok := helper.CheckSuperAdminOrAdminOpdRole(writer, request)
+	if !ok {
+		return
+	}
+
+	kodeOpd := helper.GetFilteredKodeOpd(claims, params.ByName("kode_opd"))
 
 	urusanResponses, err := controller.UrusanService.FindUrusanAndBidangByKodeOpd(request.Context(), kodeOpd)
 	if err != nil {

@@ -59,7 +59,7 @@ func NewRouter(
 
 	//rencana_kinerja
 	router.POST("/rencana_kinerja/create", rencanaKinerjaController.Create)
-	router.GET("/get_rencana_kinerja/pegawai/:pegawai_id", rencanaKinerjaController.FindAllRencanaKinerja)
+	router.GET("/get_rencana_kinerja/pegawai", rencanaKinerjaController.FindAllRencanaKinerja)
 	router.GET("/detail-rencana_kinerja/:rencana_kinerja_id", rencanaKinerjaController.FindById)
 	router.PUT("/rencana_kinerja/update/:id", rencanaKinerjaController.Update)
 	router.DELETE("/rencana_kinerja/delete/:id", rencanaKinerjaController.Delete)
@@ -467,6 +467,9 @@ func NewRouter(
 	router.GET("/pohon_kinerja_opd/control_pokin_opd/:kode_opd/:tahun", pohonKinerjaOpdController.ControlPokinOpd)
 	router.GET("/user/cek_admin_opd", userController.CekAdminOpd)
 	router.GET("/pohon_kinerja_opd/leaderboard_pokin_opd/:tahun", pohonKinerjaOpdController.LeaderboardPokinOpd)
+
+	//change password
+	router.POST("/user/change_password", userController.ChangePassword)
 
 	return router
 }

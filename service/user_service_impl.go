@@ -8,6 +8,10 @@ import (
 	"ekak_kabupaten_madiun/model/web/user"
 	"ekak_kabupaten_madiun/repository"
 	"errors"
+	"fmt"
+	"sort"
+	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -236,7 +240,15 @@ func (service *UserServiceImpl) FindAll(ctx context.Context, kodeOpd string) ([]
 	var userResponses []user.UserResponse
 	for _, u := range users {
 		var roles []user.RoleResponse
-		for _, role := range u.Role {
+
+		// Sort roles berdasarkan ID untuk konsistensi
+		sortedRoles := make([]domain.Roles, len(u.Role))
+		copy(sortedRoles, u.Role)
+		sort.Slice(sortedRoles, func(i, j int) bool {
+			return sortedRoles[i].Id < sortedRoles[j].Id
+		})
+
+		for _, role := range sortedRoles {
 			roles = append(roles, user.RoleResponse{
 				Id:   role.Id,
 				Role: role.Role,
@@ -258,7 +270,6 @@ func (service *UserServiceImpl) FindAll(ctx context.Context, kodeOpd string) ([]
 
 	return userResponses, nil
 }
-
 func (service *UserServiceImpl) FindById(ctx context.Context, id int) (user.UserResponse, error) {
 	tx, err := service.DB.Begin()
 	if err != nil {
@@ -358,6 +369,103 @@ func (service *UserServiceImpl) FindById(ctx context.Context, id int) (user.User
 // 	return response, nil
 // }
 
+type LoginAttempt struct {
+	Count        int
+	LastAttempt  time.Time
+	BlockedUntil time.Time
+}
+
+var (
+	// Map untuk menyimpan login attempts per NIP
+	loginAttempts     = make(map[string]*LoginAttempt)
+	loginAttemptsLock sync.RWMutex
+
+	// Konfigurasi throttling
+	maxLoginAttempts = 3                // Maksimal 3 kali salah
+	blockDuration    = 3 * time.Minute  // Block selama 3 menit
+	attemptWindow    = 15 * time.Minute // Reset counter setelah 15 menit tidak ada attempt
+)
+
+// ✅ Fungsi untuk cek apakah user sedang di-block
+func isUserBlocked(nip string) (bool, time.Duration) {
+	loginAttemptsLock.RLock()
+	defer loginAttemptsLock.RUnlock()
+
+	attempt, exists := loginAttempts[nip]
+	if !exists {
+		return false, 0
+	}
+
+	// Cek apakah masih dalam periode block
+	if time.Now().Before(attempt.BlockedUntil) {
+		remainingTime := time.Until(attempt.BlockedUntil)
+		return true, remainingTime
+	}
+
+	return false, 0
+}
+
+// ✅ Fungsi untuk record login failure
+func recordLoginFailure(nip string) (blocked bool, remainingTime time.Duration) {
+	loginAttemptsLock.Lock()
+	defer loginAttemptsLock.Unlock()
+
+	now := time.Now()
+	attempt, exists := loginAttempts[nip]
+
+	if !exists {
+		// First attempt
+		loginAttempts[nip] = &LoginAttempt{
+			Count:       1,
+			LastAttempt: now,
+		}
+		return false, 0
+	}
+
+	// Reset counter jika sudah lewat dari attemptWindow
+	if now.Sub(attempt.LastAttempt) > attemptWindow {
+		attempt.Count = 1
+		attempt.LastAttempt = now
+		attempt.BlockedUntil = time.Time{}
+		return false, 0
+	}
+
+	// Increment counter
+	attempt.Count++
+	attempt.LastAttempt = now
+
+	// Block jika sudah mencapai max attempts
+	if attempt.Count >= maxLoginAttempts {
+		attempt.BlockedUntil = now.Add(blockDuration)
+		remainingTime = blockDuration
+		return true, remainingTime
+	}
+
+	return false, 0
+}
+
+// ✅ Fungsi untuk reset login attempts (dipanggil saat login berhasil)
+func resetLoginAttempts(nip string) {
+	loginAttemptsLock.Lock()
+	defer loginAttemptsLock.Unlock()
+
+	delete(loginAttempts, nip)
+}
+
+// ✅ Fungsi untuk cleanup old entries (optional, dipanggil secara periodik)
+func cleanupOldLoginAttempts() {
+	loginAttemptsLock.Lock()
+	defer loginAttemptsLock.Unlock()
+
+	now := time.Now()
+	for nip, attempt := range loginAttempts {
+		// Hapus entry yang sudah tidak relevan (lebih dari attemptWindow)
+		if now.Sub(attempt.LastAttempt) > attemptWindow && now.After(attempt.BlockedUntil) {
+			delete(loginAttempts, nip)
+		}
+	}
+}
+
 func (service *UserServiceImpl) Login(ctx context.Context, request user.UserLoginRequest) (user.UserLoginResponse, error) {
 	tx, err := service.DB.Begin()
 	if err != nil {
@@ -373,15 +481,23 @@ func (service *UserServiceImpl) Login(ctx context.Context, request user.UserLogi
 		return user.UserLoginResponse{}, errors.New("password harus diisi")
 	}
 
-	// Validasi format NIP
-	// if !helper.IsValidNIP(request.Username) {
-	// 	return user.UserLoginResponse{}, errors.New("format nip tidak valid")
-	// }
+	// ✅ CEK APAKAH USER SEDANG DI-BLOCK
+	blocked, remainingTime := isUserBlocked(request.Username)
+	if blocked {
+		minutes := int(remainingTime.Minutes())
+		seconds := int(remainingTime.Seconds()) % 60
+		return user.UserLoginResponse{}, fmt.Errorf(
+			"akun diblokir karena terlalu banyak percobaan login gagal. silakan coba lagi dalam %d menit %d detik",
+			minutes, seconds,
+		)
+	}
 
 	// Cari user berdasarkan NIP saja
 	userDomain, err := service.UserRepository.FindByEmailOrNip(ctx, tx, request.Username)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			// ✅ RECORD FAILURE - NIP tidak ditemukan
+			recordLoginFailure(request.Username)
 			return user.UserLoginResponse{}, errors.New("nip atau password salah")
 		}
 		return user.UserLoginResponse{}, err
@@ -389,6 +505,8 @@ func (service *UserServiceImpl) Login(ctx context.Context, request user.UserLogi
 
 	// Pastikan username yang digunakan adalah NIP
 	if userDomain.Nip != request.Username {
+		// ✅ RECORD FAILURE - Bukan NIP
+		recordLoginFailure(request.Username)
 		return user.UserLoginResponse{}, errors.New("silakan login menggunakan NIP")
 	}
 
@@ -402,14 +520,44 @@ func (service *UserServiceImpl) Login(ctx context.Context, request user.UserLogi
 		return user.UserLoginResponse{}, err
 	}
 
+	// ✅ VALIDASI PASSWORD
 	err = bcrypt.CompareHashAndPassword([]byte(userDomain.Password), []byte(request.Password))
 	if err != nil {
+		// ✅ RECORD FAILURE - Password salah
+		blocked, remainingTime := recordLoginFailure(request.Username)
+
+		if blocked {
+			minutes := int(remainingTime.Minutes())
+			seconds := int(remainingTime.Seconds()) % 60
+			return user.UserLoginResponse{}, fmt.Errorf(
+				"terlalu banyak percobaan login gagal. akun diblokir selama %d menit %d detik",
+				minutes, seconds,
+			)
+		}
+
+		// Hitung berapa kali lagi bisa mencoba
+		loginAttemptsLock.RLock()
+		attempt := loginAttempts[request.Username]
+		remainingAttempts := maxLoginAttempts - attempt.Count
+		loginAttemptsLock.RUnlock()
+
+		if remainingAttempts > 0 {
+			return user.UserLoginResponse{}, fmt.Errorf(
+				"nip atau password salah. sisa percobaan: %d kali",
+				remainingAttempts,
+			)
+		}
+
 		return user.UserLoginResponse{}, errors.New("nip atau password salah")
 	}
 
+	// ✅ VALIDASI AKUN AKTIF
 	if !userDomain.IsActive {
 		return user.UserLoginResponse{}, errors.New("akun tidak aktif")
 	}
+
+	// ✅ LOGIN BERHASIL - RESET ATTEMPTS
+	resetLoginAttempts(request.Username)
 
 	roleNames := make([]string, 0, len(userDomain.Role))
 	for _, role := range userDomain.Role {
@@ -563,4 +711,83 @@ func (service *UserServiceImpl) CekAdminOpd(ctx context.Context) ([]user.CekAdmi
 	}
 
 	return response, nil
+}
+
+func (service *UserServiceImpl) GetKodeOpdByNip(ctx context.Context, nip string) (string, error) {
+	tx, err := service.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer helper.CommitOrRollback(tx)
+
+	pegawai, err := service.PegawaiRepository.FindByNip(ctx, tx, nip)
+	if err != nil {
+		return "", err
+	}
+
+	return pegawai.KodeOpd, nil
+}
+
+func (service *UserServiceImpl) ChangePassword(ctx context.Context, request user.UserChangePasswordRequest) error {
+	tx, err := service.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer helper.CommitOrRollback(tx)
+
+	// Validasi input dasar
+	if request.Password1 == "" {
+		return errors.New("password baru harus diisi")
+	}
+	if request.Password2 == "" {
+		return errors.New("konfirmasi password harus diisi")
+	}
+	if request.Password1 != request.Password2 {
+		return errors.New("password baru dan konfirmasi password tidak sama")
+	}
+
+	// Validasi panjang password
+	if len(request.Password1) < 6 {
+		return errors.New("password minimal 6 karakter")
+	}
+
+	// Validasi NIP harus diisi
+	if request.Nip == "" {
+		return errors.New("NIP harus diisi")
+	}
+
+	// Cari user berdasarkan NIP
+	userDomain, err := service.UserRepository.FindByNip(ctx, tx, request.Nip)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errors.New("user tidak ditemukan")
+		}
+		return fmt.Errorf("gagal mencari user: %v", err)
+	}
+
+	if userDomain.Id == 0 {
+		return errors.New("user tidak ditemukan")
+	}
+
+	// Validasi old_password jika diperlukan (untuk role selain super_admin dan admin_opd)
+	if request.OldPassword != "" {
+		err = bcrypt.CompareHashAndPassword([]byte(userDomain.Password), []byte(request.OldPassword))
+		if err != nil {
+			return errors.New("password lama tidak sesuai")
+		}
+	}
+
+	// Hash password baru
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(request.Password1), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("gagal mengenkripsi password: %v", err)
+	}
+
+	// Update password menggunakan repository method
+	err = service.UserRepository.UpdatePassword(ctx, tx, userDomain.Nip, string(hashedPassword))
+	if err != nil {
+		return fmt.Errorf("gagal mengubah password: %v", err)
+	}
+
+	return nil
 }

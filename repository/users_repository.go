@@ -16,4 +16,5 @@ type UserRepository interface {
 	FindByEmailOrNip(ctx context.Context, tx *sql.Tx, username string) (domain.Users, error)
 	FindByKodeOpdAndRole(ctx context.Context, tx *sql.Tx, kodeOpd string, roleName string) ([]domain.Users, error)
 	CekAdminOpd(ctx context.Context, tx *sql.Tx) ([]domain.Users, error)
+	UpdatePassword(ctx context.Context, tx *sql.Tx, nip string, hashedPassword string) error
 }

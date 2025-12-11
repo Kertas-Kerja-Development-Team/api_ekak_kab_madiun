@@ -22,6 +22,9 @@ func NewRoleControllerImpl(roleService service.RoleService) *RoleControllerImpl 
 }
 
 func (controller *RoleControllerImpl) Create(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	roleCreateRequest := user.RoleCreateRequest{}
 	helper.ReadFromRequestBody(request, &roleCreateRequest)
 
@@ -45,6 +48,10 @@ func (controller *RoleControllerImpl) Create(writer http.ResponseWriter, request
 }
 
 func (controller *RoleControllerImpl) Update(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	roleId := params.ByName("id")
 	id, err := strconv.Atoi(roleId)
 	if err != nil {
@@ -81,6 +88,10 @@ func (controller *RoleControllerImpl) Update(writer http.ResponseWriter, request
 }
 
 func (controller *RoleControllerImpl) Delete(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	roleId := params.ByName("id")
 	id, err := strconv.Atoi(roleId)
 	if err != nil {
@@ -113,6 +124,10 @@ func (controller *RoleControllerImpl) Delete(writer http.ResponseWriter, request
 }
 
 func (controller *RoleControllerImpl) FindById(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	roleId := params.ByName("id")
 	id, err := strconv.Atoi(roleId)
 	if err != nil {
@@ -145,6 +160,10 @@ func (controller *RoleControllerImpl) FindById(writer http.ResponseWriter, reque
 }
 
 func (controller *RoleControllerImpl) FindAll(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	roleResponses, err := controller.RoleService.FindAll(request.Context())
 	if err != nil {
 		webResponse := web.WebResponse{

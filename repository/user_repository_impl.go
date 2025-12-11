@@ -88,7 +88,7 @@ func (repository *UserRepositoryImpl) FindAll(ctx context.Context, tx *sql.Tx, k
 	}
 	defer rows.Close()
 
-	var users []domain.Users
+	// var users []domain.Users
 	userMap := make(map[int]*domain.Users)
 
 	for rows.Next() {
@@ -130,11 +130,16 @@ func (repository *UserRepositoryImpl) FindAll(ctx context.Context, tx *sql.Tx, k
 		}
 	}
 
+	// Sort users berdasarkan ID untuk konsistensi (sama seperti FindByKodeOpdAndRole)
+	var sortedUsers []domain.Users
 	for _, user := range userMap {
-		users = append(users, *user)
+		sortedUsers = append(sortedUsers, *user)
 	}
+	sort.Slice(sortedUsers, func(i, j int) bool {
+		return sortedUsers[i].Role[0].Role < sortedUsers[j].Role[0].Role
+	})
 
-	return users, nil
+	return sortedUsers, nil
 }
 
 func (repository *UserRepositoryImpl) FindById(ctx context.Context, tx *sql.Tx, id int) (domain.Users, error) {
@@ -497,4 +502,13 @@ func (repository *UserRepositoryImpl) CekAdminOpd(ctx context.Context, tx *sql.T
 	}
 
 	return users, nil
+}
+
+func (repository *UserRepositoryImpl) UpdatePassword(ctx context.Context, tx *sql.Tx, nip string, hashedPassword string) error {
+	script := "UPDATE tb_users SET password = ? WHERE nip = ?"
+	_, err := tx.ExecContext(ctx, script, hashedPassword, nip)
+	if err != nil {
+		return err
+	}
+	return nil
 }

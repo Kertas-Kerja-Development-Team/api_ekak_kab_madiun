@@ -2226,7 +2226,30 @@ func (service *PohonKinerjaOpdServiceImpl) FindPokinAtasan(ctx context.Context, 
 	return response, nil
 }
 
+type CachedControlPokin struct {
+	Data      pohonkinerja.ControlPokinOpdResponse
+	Timestamp time.Time
+}
+
+var (
+	controlPokinCache     = make(map[string]CachedControlPokin)
+	controlPokinCacheLock sync.RWMutex
+	controlCacheExpiry    = 1 * time.Minute // Cache 5 menit
+)
+
 func (service *PohonKinerjaOpdServiceImpl) ControlPokinOpd(ctx context.Context, kodeOpd, tahun string) (pohonkinerja.ControlPokinOpdResponse, error) {
+	cacheKey := fmt.Sprintf("control_%s_%s", kodeOpd, tahun)
+
+	// ✅ Cek cache terlebih dahulu
+	controlPokinCacheLock.RLock()
+	if cached, exists := controlPokinCache[cacheKey]; exists {
+		if time.Since(cached.Timestamp) < controlCacheExpiry {
+			controlPokinCacheLock.RUnlock()
+			return cached.Data, nil
+		}
+	}
+	controlPokinCacheLock.RUnlock()
+
 	tx, err := service.DB.Begin()
 	if err != nil {
 		return pohonkinerja.ControlPokinOpdResponse{}, err
@@ -2240,7 +2263,7 @@ func (service *PohonKinerjaOpdServiceImpl) ControlPokinOpd(ctx context.Context, 
 	}
 
 	// Cari level maksimum yang ada di data
-	maxLevel := 6 // Minimal sampai Operational (level 6)
+	maxLevel := 6
 	for level := range dataPerLevel {
 		if level > maxLevel {
 			maxLevel = level
@@ -2254,72 +2277,65 @@ func (service *PohonKinerjaOpdServiceImpl) ControlPokinOpd(ctx context.Context, 
 		6: "Operational",
 	}
 
-	// Build response data per level
-	var responseData []pohonkinerja.ControlPokinOpdData
+	//  OPTIMASI: Pre-allocate slice dengan kapasitas yang tepat
+	expectedLevels := maxLevel - 3 // level 4 sampai maxLevel
+	responseData := make([]pohonkinerja.ControlPokinOpdData, 0, expectedLevels)
+
 	var totalPokin, totalPelaksana, totalPokinAdaPelaksana, totalPokinTanpaPelaksana int
-	var totalRencanaKinerja, totalPokinAdaRekin, totalPokinTanpaRekin int // ← TAMBAH VARIABEL BARU
+	var totalRencanaKinerja, totalPokinAdaRekin, totalPokinTanpaRekin int
 
 	// Iterasi dari level 4 sampai maxLevel
 	for level := 4; level <= maxLevel; level++ {
-		var namaLevel string
+		data, exists := dataPerLevel[level]
+		if !exists {
+			continue
+		}
 
-		// Tentukan nama level
+		var namaLevel string
 		if level >= 7 {
-			// Level 7+ adalah Operational N (Operational 1, 2, 3, dst)
-			operationalN := level - 6 // Level 7 = Operational 1, Level 8 = Operational 2, dst
-			namaLevel = fmt.Sprintf("Operational %d", operationalN)
+			namaLevel = fmt.Sprintf("Operational %d", level-6)
 		} else {
 			namaLevel = levelNames[level]
 		}
 
-		if data, exists := dataPerLevel[level]; exists {
-			// Hitung persentase pelaksana = (pokin ada pelaksana / total pokin) * 100
-			persentasePelaksana := 0.0
-			if data.JumlahPokin > 0 {
-				persentasePelaksana = (float64(data.JumlahPokinAdaPelaksana) / float64(data.JumlahPokin)) * 100
-			}
-
-			// ✅ Hitung persentase cascading = (pokin ada rekin / total pokin) * 100
-			persentaseCascading := 0.0
-			if data.JumlahPokin > 0 {
-				persentaseCascading = (float64(data.JumlahPokinAdaRekin) / float64(data.JumlahPokin)) * 100
-			}
-
-			responseData = append(responseData, pohonkinerja.ControlPokinOpdData{
-				LevelPohon:                level,
-				NamaLevel:                 namaLevel,
-				JumlahPokin:               data.JumlahPokin,
-				JumlahPelaksana:           data.JumlahPelaksana,
-				JumlahPokinAdaPelaksana:   data.JumlahPokinAdaPelaksana,
-				JumlahPokinTanpaPelaksana: data.JumlahPokinTanpaPelaksana,
-				JumlahRencanaKinerja:      data.JumlahRencanaKinerja,
-				JumlahPokinAdaRekin:       data.JumlahPokinAdaRekin,
-				JumlahPokinTanpaRekin:     data.JumlahPokinTanpaRekin,
-				Persentase:                fmt.Sprintf("%.0f%%", persentasePelaksana),
-				PersentaseCascading:       fmt.Sprintf("%.0f%%", persentaseCascading),
-			})
-
-			// Akumulasi total
-			totalPokin += data.JumlahPokin
-			totalPelaksana += data.JumlahPelaksana
-			totalPokinAdaPelaksana += data.JumlahPokinAdaPelaksana
-			totalPokinTanpaPelaksana += data.JumlahPokinTanpaPelaksana
-			totalRencanaKinerja += data.JumlahRencanaKinerja
-			totalPokinAdaRekin += data.JumlahPokinAdaRekin
-			totalPokinTanpaRekin += data.JumlahPokinTanpaRekin
+		//  OPTIMASI: Hitung persentase langsung tanpa variabel temporary
+		persentasePelaksana := "0%"
+		persentaseCascading := "0%"
+		if data.JumlahPokin > 0 {
+			persentasePelaksana = fmt.Sprintf("%.0f%%", float64(data.JumlahPokinAdaPelaksana)*100.0/float64(data.JumlahPokin))
+			persentaseCascading = fmt.Sprintf("%.0f%%", float64(data.JumlahPokinAdaRekin)*100.0/float64(data.JumlahPokin))
 		}
+
+		responseData = append(responseData, pohonkinerja.ControlPokinOpdData{
+			LevelPohon:                level,
+			NamaLevel:                 namaLevel,
+			JumlahPokin:               data.JumlahPokin,
+			JumlahPelaksana:           data.JumlahPelaksana,
+			JumlahPokinAdaPelaksana:   data.JumlahPokinAdaPelaksana,
+			JumlahPokinTanpaPelaksana: data.JumlahPokinTanpaPelaksana,
+			JumlahRencanaKinerja:      data.JumlahRencanaKinerja,
+			JumlahPokinAdaRekin:       data.JumlahPokinAdaRekin,
+			JumlahPokinTanpaRekin:     data.JumlahPokinTanpaRekin,
+			Persentase:                persentasePelaksana,
+			PersentaseCascading:       persentaseCascading,
+		})
+
+		// Akumulasi total
+		totalPokin += data.JumlahPokin
+		totalPelaksana += data.JumlahPelaksana
+		totalPokinAdaPelaksana += data.JumlahPokinAdaPelaksana
+		totalPokinTanpaPelaksana += data.JumlahPokinTanpaPelaksana
+		totalRencanaKinerja += data.JumlahRencanaKinerja
+		totalPokinAdaRekin += data.JumlahPokinAdaRekin
+		totalPokinTanpaRekin += data.JumlahPokinTanpaRekin
 	}
 
-	// Hitung persentase total pelaksana
-	persentaseTotalPelaksana := 0.0
+	// Hitung persentase total
+	persentaseTotalPelaksana := "0%"
+	persentaseTotalCascading := "0%"
 	if totalPokin > 0 {
-		persentaseTotalPelaksana = (float64(totalPokinAdaPelaksana) / float64(totalPokin)) * 100
-	}
-
-	// ✅ Hitung persentase total cascading
-	persentaseTotalCascading := 0.0
-	if totalPokin > 0 {
-		persentaseTotalCascading = (float64(totalPokinAdaRekin) / float64(totalPokin)) * 100
+		persentaseTotalPelaksana = fmt.Sprintf("%.0f%%", float64(totalPokinAdaPelaksana)*100.0/float64(totalPokin))
+		persentaseTotalCascading = fmt.Sprintf("%.0f%%", float64(totalPokinAdaRekin)*100.0/float64(totalPokin))
 	}
 
 	response := pohonkinerja.ControlPokinOpdResponse{
@@ -2332,12 +2348,28 @@ func (service *PohonKinerjaOpdServiceImpl) ControlPokinOpd(ctx context.Context, 
 			TotalRencanaKinerja:      totalRencanaKinerja,
 			TotalPokinAdaRekin:       totalPokinAdaRekin,
 			TotalPokinTanpaRekin:     totalPokinTanpaRekin,
-			Persentase:               fmt.Sprintf("%.0f%%", persentaseTotalPelaksana),
-			PersentaseCascading:      fmt.Sprintf("%.0f%%", persentaseTotalCascading),
+			Persentase:               persentaseTotalPelaksana,
+			PersentaseCascading:      persentaseTotalCascading,
 		},
 	}
 
+	// Simpan ke cache
+	controlPokinCacheLock.Lock()
+	controlPokinCache[cacheKey] = CachedControlPokin{
+		Data:      response,
+		Timestamp: time.Now(),
+	}
+	controlPokinCacheLock.Unlock()
+
 	return response, nil
+}
+
+// Tambahkan fungsi untuk clear cache
+func (service *PohonKinerjaOpdServiceImpl) ClearControlPokinCache(kodeOpd, tahun string) {
+	cacheKey := fmt.Sprintf("control_%s_%s", kodeOpd, tahun)
+	controlPokinCacheLock.Lock()
+	delete(controlPokinCache, cacheKey)
+	controlPokinCacheLock.Unlock()
 }
 
 type CachedLeaderboard struct {

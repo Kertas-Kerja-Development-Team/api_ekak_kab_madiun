@@ -6,9 +6,7 @@ import (
 	"ekak_kabupaten_madiun/model/web/subkegiatan"
 	"ekak_kabupaten_madiun/service"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/julienschmidt/httprouter"
 )
@@ -24,6 +22,9 @@ func NewSubKegiatanControllerImpl(subKegiatanService service.SubKegiatanService)
 }
 
 func (controller *SubKegiatanControllerImpl) Create(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	subKegiatanCreateRequest := subkegiatan.SubKegiatanCreateRequest{}
 	helper.ReadFromRequestBody(request, &subKegiatanCreateRequest)
 
@@ -45,6 +46,9 @@ func (controller *SubKegiatanControllerImpl) Create(writer http.ResponseWriter, 
 }
 
 func (controller *SubKegiatanControllerImpl) Update(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	id := params.ByName("id")
 	if id == "" {
 		helper.WriteToResponseBody(writer, web.WebSubKegiatanResponse{
@@ -90,6 +94,9 @@ func (controller *SubKegiatanControllerImpl) Update(writer http.ResponseWriter, 
 }
 
 func (controller *SubKegiatanControllerImpl) FindById(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	subKegiatanId := params.ByName("id")
 	if subKegiatanId == "" {
 		helper.WriteToResponseBody(writer, web.WebSubKegiatanResponse{
@@ -118,6 +125,9 @@ func (controller *SubKegiatanControllerImpl) FindById(writer http.ResponseWriter
 }
 
 func (controller *SubKegiatanControllerImpl) FindAll(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	subKegiatanResponses, err := controller.SubKegiatanService.FindAll(request.Context())
 
 	if err != nil {
@@ -137,6 +147,9 @@ func (controller *SubKegiatanControllerImpl) FindAll(writer http.ResponseWriter,
 }
 
 func (controller *SubKegiatanControllerImpl) Delete(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	subKegiatanId := params.ByName("id")
 
 	err := controller.SubKegiatanService.Delete(request.Context(), subKegiatanId)
@@ -169,43 +182,10 @@ func (controller *SubKegiatanControllerImpl) FindAllByRekin(writer http.Response
 		return
 	}
 
-	host := os.Getenv("host")
-	port := os.Getenv("port")
-
-	buttonActions := []web.ActionButton{
-		{
-			NameAction: "Create Subkegiatan",
-			Method:     "POST",
-			Url:        fmt.Sprintf("%s:%s/subkegiatan/create", host, port),
-		},
-		{
-			NameAction: "Update Subkegiatan",
-			Method:     "PUT",
-			Url:        fmt.Sprintf("%s:%s/sub_kegiatan/update/:id", host, port),
-		},
-		{
-			NameAction: "Delete Subkegiatan",
-			Method:     "DELETE",
-			Url:        fmt.Sprintf("%s:%s/sub_kegiatan/delete/:id", host, port),
-		},
-		{
-			NameAction: "Pilihan Subkegiatan",
-			Method:     "GET",
-			Url:        fmt.Sprintf("%s:%s/sub_kegiatan/pilihan/:kode_opd", host, port),
-		},
-		{
-			NameAction:  "Create Subkegiatan Yang Dipilih",
-			Method:      "POST",
-			Url:         fmt.Sprintf("%s:%s/subkegiatanterpilih/create/:rencana_kinerja_id", host, port),
-			JenisUsulan: "subkegiatan",
-		},
-	}
-
 	helper.WriteToResponseBody(writer, web.WebSubKegiatanResponse{
 		Code:   http.StatusOK,
 		Status: "success get data sub kegiatan",
 		Data:   subKegiatanResponses,
-		Action: buttonActions,
 	})
 }
 

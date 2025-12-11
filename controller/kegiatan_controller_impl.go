@@ -21,6 +21,9 @@ func NewKegiatanControllerImpl(kegiatanService service.KegiatanService) *Kegiata
 }
 
 func (controller *KegiatanControllerImpl) Create(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	// Decode request JSON ke struct kegiatan
 	kegiatanCreateRequest := kegiatan.KegiatanCreateRequest{}
 	helper.ReadFromRequestBody(request, &kegiatanCreateRequest)
@@ -47,6 +50,9 @@ func (controller *KegiatanControllerImpl) Create(writer http.ResponseWriter, req
 	helper.WriteToResponseBody(writer, webResponse)
 }
 func (controller *KegiatanControllerImpl) Update(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	// Decode request JSON ke struct kegiatan
 	kegiatanUpdateRequest := kegiatan.KegiatanUpdateRequest{}
 	helper.ReadFromRequestBody(request, &kegiatanUpdateRequest)
@@ -77,6 +83,9 @@ func (controller *KegiatanControllerImpl) Update(writer http.ResponseWriter, req
 }
 
 func (controller *KegiatanControllerImpl) Delete(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	// Ambil ID dari parameter URL
 	kegiatanId := params.ByName("id")
 
@@ -103,6 +112,9 @@ func (controller *KegiatanControllerImpl) Delete(writer http.ResponseWriter, req
 }
 
 func (controller *KegiatanControllerImpl) FindById(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	// Ambil ID dari parameter URL
 	kegiatanId := params.ByName("id")
 
@@ -129,6 +141,9 @@ func (controller *KegiatanControllerImpl) FindById(writer http.ResponseWriter, r
 }
 
 func (controller *KegiatanControllerImpl) FindAll(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	// Panggil service untuk mendapatkan semua kegiatan
 	kegiatanResponses, err := controller.KegiatanService.FindAll(request.Context())
 	if err != nil {

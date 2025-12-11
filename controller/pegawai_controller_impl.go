@@ -21,6 +21,9 @@ func NewPegawaiControllerImpl(pegawaiService service.PegawaiService) *PegawaiCon
 }
 
 func (controller *PegawaiControllerImpl) Create(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	pegawaiCreateRequest := pegawai.PegawaiCreateRequest{}
 	helper.ReadFromRequestBody(request, &pegawaiCreateRequest)
 
@@ -44,6 +47,10 @@ func (controller *PegawaiControllerImpl) Create(writer http.ResponseWriter, requ
 }
 
 func (controller *PegawaiControllerImpl) Update(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	pegawaiId := params.ByName("id")
 
 	pegawaiUpdateRequest := pegawai.PegawaiUpdateRequest{}
@@ -80,6 +87,10 @@ func (controller *PegawaiControllerImpl) Update(writer http.ResponseWriter, requ
 }
 
 func (controller *PegawaiControllerImpl) Delete(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	pegawaiId := params.ByName("id")
 
 	controller.PegawaiService.Delete(request.Context(), pegawaiId)
@@ -92,6 +103,10 @@ func (controller *PegawaiControllerImpl) Delete(writer http.ResponseWriter, requ
 }
 
 func (controller *PegawaiControllerImpl) FindById(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
+
 	pegawaiId := params.ByName("id")
 
 	pegawaiResponse, err := controller.PegawaiService.FindById(request.Context(), pegawaiId)
@@ -114,6 +129,9 @@ func (controller *PegawaiControllerImpl) FindById(writer http.ResponseWriter, re
 }
 
 func (controller *PegawaiControllerImpl) FindAll(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	kodeOpd := request.URL.Query().Get("kode_opd")
 	pegawaiResponses, err := controller.PegawaiService.FindAll(request.Context(), kodeOpd)
 	if err != nil {

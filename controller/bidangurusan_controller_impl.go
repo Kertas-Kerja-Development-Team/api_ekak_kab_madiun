@@ -21,6 +21,9 @@ func NewBidangUrusanControllerImpl(bidangUrusanService service.BidangUrusanServi
 }
 
 func (controller *BidangUrusanControllerImpl) Create(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	bidangUrusanCreateRequest := bidangurusanresponse.BidangUrusanCreateRequest{}
 	helper.ReadFromRequestBody(request, &bidangUrusanCreateRequest)
 
@@ -44,6 +47,9 @@ func (controller *BidangUrusanControllerImpl) Create(writer http.ResponseWriter,
 }
 
 func (controller *BidangUrusanControllerImpl) Update(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	bidangUrusanUpdateRequest := bidangurusanresponse.BidangUrusanUpdateRequest{}
 	helper.ReadFromRequestBody(request, &bidangUrusanUpdateRequest)
 
@@ -68,6 +74,9 @@ func (controller *BidangUrusanControllerImpl) Update(writer http.ResponseWriter,
 }
 
 func (controller *BidangUrusanControllerImpl) FindById(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	bidangUrusanId := params.ByName("id")
 
 	bidangUrusanResponse, err := controller.BidangUrusanService.FindById(request.Context(), bidangUrusanId)
@@ -89,6 +98,9 @@ func (controller *BidangUrusanControllerImpl) FindById(writer http.ResponseWrite
 }
 
 func (controller *BidangUrusanControllerImpl) FindAll(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	bidangUrusanResponses, err := controller.BidangUrusanService.FindAll(request.Context())
 	if err != nil {
 		webResponse := web.WebResponse{
@@ -108,6 +120,9 @@ func (controller *BidangUrusanControllerImpl) FindAll(writer http.ResponseWriter
 }
 
 func (controller *BidangUrusanControllerImpl) Delete(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	bidangUrusanId := params.ByName("id")
 
 	err := controller.BidangUrusanService.Delete(request.Context(), bidangUrusanId)
@@ -128,6 +143,9 @@ func (controller *BidangUrusanControllerImpl) Delete(writer http.ResponseWriter,
 }
 
 func (controller *BidangUrusanControllerImpl) FindByKodeOpd(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	kodeOpd := params.ByName("kode_opd")
 
 	bidangUrusanResponses, err := controller.BidangUrusanService.FindByKodeOpd(request.Context(), kodeOpd)

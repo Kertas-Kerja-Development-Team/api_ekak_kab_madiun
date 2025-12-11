@@ -21,6 +21,9 @@ func NewProgramControllerImpl(programService service.ProgramService) *ProgramCon
 }
 
 func (controller *ProgramControllerImpl) Create(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	programCreateRequest := programkegiatan.ProgramKegiatanCreateRequest{}
 	helper.ReadFromRequestBody(request, &programCreateRequest)
 
@@ -44,6 +47,9 @@ func (controller *ProgramControllerImpl) Create(writer http.ResponseWriter, requ
 }
 
 func (controller *ProgramControllerImpl) Update(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	programUpdateRequest := programkegiatan.ProgramKegiatanUpdateRequest{}
 	helper.ReadFromRequestBody(request, &programUpdateRequest)
 
@@ -68,6 +74,9 @@ func (controller *ProgramControllerImpl) Update(writer http.ResponseWriter, requ
 }
 
 func (controller *ProgramControllerImpl) Delete(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	programId := params.ByName("id")
 	err := controller.ProgramService.Delete(request.Context(), programId)
 	if err != nil {
@@ -89,6 +98,9 @@ func (controller *ProgramControllerImpl) Delete(writer http.ResponseWriter, requ
 }
 
 func (controller *ProgramControllerImpl) FindById(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	programId := params.ByName("id")
 	programResponse, err := controller.ProgramService.FindById(request.Context(), programId)
 	if err != nil {
@@ -110,6 +122,9 @@ func (controller *ProgramControllerImpl) FindById(writer http.ResponseWriter, re
 }
 
 func (controller *ProgramControllerImpl) FindAll(writer http.ResponseWriter, request *http.Request, params httprouter.Params) {
+	if !helper.CheckSuperAdminRole(writer, request) {
+		return
+	}
 	programResponses, err := controller.ProgramService.FindAll(request.Context())
 	if err != nil {
 		webResponse := web.WebResponse{
