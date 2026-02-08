@@ -54,6 +54,7 @@ func NewRouter(
 	csfController controller.CSFController,
 	programUnggulanController controller.ProgramUnggulanController,
 	matrixRenjaController controller.MatrixRenjaController,
+	pkController controller.PkController,
 ) *httprouter.Router {
 	router := httprouter.New()
 
@@ -220,6 +221,7 @@ func NewRouter(
 	router.GET("/pegawai/detail/:id", pegawaiController.FindById)
 	router.DELETE("/pegawai/delete/:id", pegawaiController.Delete)
 	router.GET("/pegawai/findall", pegawaiController.FindAll)
+	router.POST("/pegawai/tambahJabatan", pegawaiController.TambahJabatanPegawai)
 
 	//lembaga
 	router.POST("/lembaga/create", lembagaController.Create)
@@ -473,6 +475,11 @@ func NewRouter(
 	router.POST("/bidang_urusan_opd/create", bidangUrusanController.CreateOPD)
 	router.DELETE("/bidang_urusan_opd/delete/:id", bidangUrusanController.DeleteOPD)
 	router.GET("/bidang_urusan_opd/findall/:kode_opd", bidangUrusanController.FindBidangUrusanTerpilihByKodeOpd)
+
+	// PK
+	router.GET("/pk_opd/:kode_opd/:tahun", pkController.FindAllPkOpdTahunan)
+	router.POST("/pk_opd/hubungkan", pkController.HubungkanRekin)
+	router.POST("/pk_opd/hubungkan_atasan", pkController.HubungkanAtasan)
 
 	//clone rekin
 	router.POST("/rencana_kinerja/clone/:rekin_id/:tahun_tujuan", rencanaKinerjaController.CloneRencanaKinerja)
