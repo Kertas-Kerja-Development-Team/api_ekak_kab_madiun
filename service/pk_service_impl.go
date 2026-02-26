@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"ekak_kabupaten_madiun/helper"
 	"ekak_kabupaten_madiun/model/domain"
+	"ekak_kabupaten_madiun/model/web/opdmaster"
 	"ekak_kabupaten_madiun/model/web/pegawai"
 	"ekak_kabupaten_madiun/model/web/pkopd"
 	"ekak_kabupaten_madiun/model/web/rencanakinerja"
@@ -87,6 +88,25 @@ func (service *PkServiceImpl) FindByKodeOpdTahun(ctx context.Context, kodeOpd st
 		log.Printf("[ERROR] Find Rekin by kodeOpd and tahun: %v", err)
 		return pkopd.PkOpdResponse{}, fmt.Errorf("terjadi kesalahan sistem")
 	}
+	rekinIds := make([]string, 0, len(rekins))
+	for _, rk := range rekins {
+		rekinIds = append(rekinIds, rk.Id)
+	}
+	// anggaran by rekin id
+	// [rekinId] = 9999
+	paguByRekinId, err := service.pkOpdRepository.FindTotalPaguAnggaranByRekinIds(ctx, tx, rekinIds)
+	if err != nil {
+		log.Printf("[ERROR] findTotalPagu: %v", err)
+		return pkopd.PkOpdResponse{}, fmt.Errorf("terjadi kesalahan sistem")
+	}
+
+	// find subkegiatan by rekin id
+	// [rekinId] = { namaSub: ..., kodeSub: ...}
+	rekinSubkegiatan, err := service.pkOpdRepository.FindSubkegiatanByRekinIds(ctx, tx, rekinIds)
+	if err != nil {
+		log.Printf("[ERROR] rekinSubkegiatan: %v", err)
+		return pkopd.PkOpdResponse{}, fmt.Errorf("terjadi kesalahan sistem")
+	}
 
 	// data struktur untuk penyusunan
 	// lookup pegawai by nip untuk susun nama atasan
@@ -100,7 +120,6 @@ func (service *PkServiceImpl) FindByKodeOpdTahun(ctx context.Context, kodeOpd st
 		rekinByPegawaiId[peg.Nip] = []rencanakinerja.RencanaKinerjaResponse{}
 	}
 	rekinById := make(map[string]rencanakinerja.RencanaKinerjaResponse)
-
 	for _, rekin := range rekins {
 		rekinById[rekin.Id] = rekin
 
@@ -156,9 +175,11 @@ func (service *PkServiceImpl) FindByKodeOpdTahun(ctx context.Context, kodeOpd st
 	// DTO PK yang sudah pilih rekin atasan
 	// level -> nip -> pegawai node
 	pkByLevel := make(map[int]map[string]*pkopd.PkPegawai)
+	// mapping item by level
+	// idRekinAtasan => [ ItemPk ]
+	itemLevel3 := make(map[string][]domain.AllItemPk)
 
 	for _, rekin := range rekins {
-
 		level := rekin.LevelPohon
 		nip := rekin.PegawaiId
 		nama := rekin.NamaPegawai
@@ -185,7 +206,6 @@ func (service *PkServiceImpl) FindByKodeOpdTahun(ctx context.Context, kodeOpd st
 		// input atasan sekalian kalau ada
 		if _, ok := pkByLevel[level][nip]; !ok {
 			pkByLevel[level][nip] = &pkopd.PkPegawai{
-				JenisItem:      translateJenisItem(level),
 				NipAtasan:      nipAtasan,
 				NamaAtasan:     namaAtasan,
 				JabatanAtasan:  jabatanAtasan,
@@ -193,23 +213,55 @@ func (service *PkServiceImpl) FindByKodeOpdTahun(ctx context.Context, kodeOpd st
 				Nama:           nama,
 				JabatanPegawai: jabatanPegawai,
 				Pks:            []pkopd.PkAsn{},
-				Subkegiatan:    []pkopd.SubkegiatanPk{},
+				LevelPk:        level,
+				JenisItem:      translateJenisItem(level),
+				Item:           []pkopd.ItemPk{},
+				TotalPagu:      paguByRekinId[rekin.Id],
 			}
 		}
-		indikatorPk := []pkopd.IndikatorPk{}
+		indikatorMap := make(map[string]*pkopd.IndikatorPk)
+
 		for _, ind := range rekin.Indikator {
-			targetIndPk := []pkopd.TargetIndPk{}
+
+			if _, ok := indikatorMap[ind.Id]; !ok {
+				indikatorMap[ind.Id] = &pkopd.IndikatorPk{
+					IdRekin:     ind.RencanaKinerjaId,
+					IdIndikator: ind.Id,
+					Indikator:   ind.NamaIndikator,
+					Targets:     []pkopd.TargetIndPk{},
+				}
+			}
+
+			indikatorNode := indikatorMap[ind.Id]
+
+			existingTargets := make(map[string]struct{})
+			for _, t := range indikatorNode.Targets {
+				existingTargets[t.IdTarget] = struct{}{}
+			}
 
 			for _, tar := range ind.Target {
-				targetIndPk = append(targetIndPk, pkopd.TargetIndPk{
-					Target: tar.TargetIndikator,
-					Satuan: tar.SatuanIndikator,
-				})
+
+				if _, exists := existingTargets[tar.Id]; exists {
+					continue
+				}
+
+				indikatorNode.Targets = append(
+					indikatorNode.Targets,
+					pkopd.TargetIndPk{
+						IdIndikator: tar.IndikatorId,
+						IdTarget:    tar.Id,
+						Target:      tar.TargetIndikator,
+						Satuan:      tar.SatuanIndikator,
+					},
+				)
+
+				existingTargets[tar.Id] = struct{}{}
 			}
-			indikatorPk = append(indikatorPk, pkopd.IndikatorPk{
-				Indikator: ind.NamaIndikator,
-				Targets:   targetIndPk,
-			})
+		}
+		indikatorPk := make([]pkopd.IndikatorPk, 0, len(indikatorMap))
+
+		for _, ind := range indikatorMap {
+			indikatorPk = append(indikatorPk, *ind)
 		}
 
 		// default PK (BELUM ADA)
@@ -226,7 +278,6 @@ func (service *PkServiceImpl) FindByKodeOpdTahun(ctx context.Context, kodeOpd st
 			NamaPemilikPk:    rekin.NamaPegawai,
 			Tahun:            tahun,
 			Indikators:       indikatorPk,
-			PaguAnggaran:     0,
 		}
 
 		// enrich dari PK jika ada
@@ -239,6 +290,14 @@ func (service *PkServiceImpl) FindByKodeOpdTahun(ctx context.Context, kodeOpd st
 
 			if rAtasan, ok := rekinById[pk.IdRekinAtasan]; ok {
 				pkAsn.RekinAtasan = rAtasan.NamaRencanaKinerja
+
+				// tambahkan itemLevel3 di key by idRekinAtasan
+				if level == 6 {
+					itemLevel3[pk.IdRekinAtasan] = append(
+						itemLevel3[pk.IdRekinAtasan],
+						rekinSubkegiatan[rekin.Id],
+					)
+				}
 			}
 		}
 
@@ -247,6 +306,89 @@ func (service *PkServiceImpl) FindByKodeOpdTahun(ctx context.Context, kodeOpd st
 			pkByLevel[level][nip].Pks,
 			pkAsn,
 		)
+
+		if item, ok := rekinSubkegiatan[rekin.Id]; ok {
+			if level != 6 {
+				continue
+			}
+			itemPk := pkopd.ItemPk{
+				RekinId:  rekin.Id,
+				KodeItem: item.KodeSubkegiatan,
+				NamaItem: item.NamaSubkegiatan,
+			}
+			pkByLevel[level][nip].Item = append(
+				pkByLevel[level][nip].Item,
+				itemPk,
+			)
+		}
+	}
+	// untuk level 4 Strategic (All Program)
+	uniqueProgram := make(map[string]pkopd.ItemPk)
+
+	for _, rekin := range rekins {
+
+		if rekin.LevelPohon != 6 {
+			continue
+		}
+
+		if item, ok := rekinSubkegiatan[rekin.Id]; ok {
+
+			if item.KodeProgram == "" {
+				continue
+			}
+
+			uniqueProgram[item.KodeProgram] = pkopd.ItemPk{
+				RekinId:  rekin.Id,
+				KodeItem: item.KodeProgram,
+				NamaItem: item.NamaProgram,
+			}
+		}
+	}
+
+	// untuk level 5 Tactical
+	for idRekinAtasan, children := range itemLevel3 {
+
+		// cari rekin atasannya
+		rekinAtasan, ok := rekinById[idRekinAtasan]
+		if !ok {
+			continue
+		}
+
+		levelAtasan := rekinAtasan.LevelPohon
+		nipAtasan := rekinAtasan.PegawaiId
+
+		// defensive
+		pegNode, ok := pkByLevel[levelAtasan][nipAtasan]
+		if !ok {
+			continue
+		}
+
+		// deduplicate program
+		unique := make(map[string]pkopd.ItemPk)
+
+		for _, child := range children {
+
+			if child.KodeProgram == "" {
+				continue
+			}
+
+			unique[child.KodeProgram] = pkopd.ItemPk{
+				RekinId:  idRekinAtasan,
+				KodeItem: child.KodeProgram,
+				NamaItem: child.NamaProgram,
+			}
+		}
+
+		// append hasil unik ke atasan
+		for _, item := range unique {
+			pegNode.Item = append(pegNode.Item, item)
+		}
+	}
+
+	for _, peg := range pkByLevel[4] {
+		for _, item := range uniqueProgram {
+			peg.Item = append(peg.Item, item)
+		}
 	}
 
 	// sort rekin
@@ -309,10 +451,10 @@ func (service *PkServiceImpl) FindByKodeOpdTahun(ctx context.Context, kodeOpd st
 func (service *PkServiceImpl) HubungkanRekin(
 	ctx context.Context,
 	request pkopd.PkOpdRequest,
-) (pkopd.PkOpdResponse, error) {
+) (resp pkopd.PkOpdResponse, err error) {
 
 	// 1. validasi
-	if err := service.Validate.Struct(request); err != nil {
+	if err = service.Validate.Struct(request); err != nil {
 		log.Printf("Invalid hubungkan rekin request: %v", err)
 		return pkopd.PkOpdResponse{}, fmt.Errorf("validasi gagal")
 	}
@@ -322,22 +464,31 @@ func (service *PkServiceImpl) HubungkanRekin(
 		log.Printf("Gagal memulai transaksi: %v", err)
 		return pkopd.PkOpdResponse{}, fmt.Errorf("gagal memulai transaksi")
 	}
-	// transaksi ini selalu commit di akhir
-	// defer helper.CommitOrRollback(tx)
+
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		}
+	}()
 
 	kodeOpd := request.KodeOpd
 	tahun := request.Tahun
 	tahunStr := strconv.Itoa(tahun)
 
 	// 2. ambil OPD
-	opd, err := service.opdService.FindByKodeOpd(ctx, kodeOpd)
+	var opd opdmaster.OpdResponse
+	opd, err = service.opdService.FindByKodeOpd(ctx, kodeOpd)
 	if err != nil {
 		log.Printf("[ERROR] Find OPD: %v", err)
 		return pkopd.PkOpdResponse{}, fmt.Errorf("OPD tidak ditemukan")
 	}
 
 	// 3. ambil rekin atasan
-	rekinAtasan, err := service.rekinService.FindById(
+	var rekinAtasan rencanakinerja.RencanaKinerjaResponse
+	rekinAtasan, err = service.rekinService.FindById(
 		ctx,
 		request.IdRekinAtasan,
 		kodeOpd,
@@ -349,7 +500,8 @@ func (service *PkServiceImpl) HubungkanRekin(
 	}
 
 	// 4. ambil rekin pemilik PK
-	rekinPemilik, err := service.rekinService.FindById(
+	var rekinPemilik rencanakinerja.RencanaKinerjaResponse
+	rekinPemilik, err = service.rekinService.FindById(
 		ctx,
 		request.IdRekinPemilikPk,
 		kodeOpd,
@@ -378,64 +530,60 @@ func (service *PkServiceImpl) HubungkanRekin(
 		RekinPemilikPk:   rekinPemilik.NamaRencanaKinerja,
 	}
 
-	// 6. simpan / update relasi
-	if err := service.pkOpdRepository.HubungkanRekin(ctx, tx, pk); err != nil {
+	// 6. simpan relasi
+	if err = service.pkOpdRepository.HubungkanRekin(ctx, tx, pk); err != nil {
 		log.Printf("[ERROR] HubungkanRekin repo: %v", err)
 		return pkopd.PkOpdResponse{}, fmt.Errorf("gagal menghubungkan rekin")
 	}
 
-	// 6.1 Commit dulu
-	if err := tx.Commit(); err != nil {
-		return pkopd.PkOpdResponse{}, err
+	// 7. commit dulu sebelum read service
+	if err = tx.Commit(); err != nil {
+		return
 	}
 
-	// 7. return FULL RESPONSE TERBARU
+	// 8. ambil full response (transaction baru)
 	return service.FindByKodeOpdTahun(ctx, kodeOpd, tahun)
 }
 
 func (service *PkServiceImpl) HubungkanAtasan(
 	ctx context.Context,
 	request pkopd.HubungkanAtasanRequest,
-) (pkopd.PkOpdResponse, error) {
+) (resp pkopd.PkOpdResponse, err error) {
 
-	// 1. validasi
-	if err := service.Validate.Struct(request); err != nil {
-		log.Printf("Invalid hubungkan atasan request: %v", err)
+	if err = service.Validate.Struct(request); err != nil {
 		return pkopd.PkOpdResponse{}, fmt.Errorf("validasi gagal")
 	}
 
 	tx, err := service.DB.Begin()
 	if err != nil {
-		log.Printf("Gagal memulai transaksi: %v", err)
 		return pkopd.PkOpdResponse{}, fmt.Errorf("gagal memulai transaksi")
 	}
-	// transaksi ini selalu commit di akhir
-	// defer helper.CommitOrRollback(tx)
 
-	kodeOpd := request.KodeOpd
-	tahun := request.Tahun
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		}
+	}()
 
-	// 5. bentuk domain PK OPD
 	strukturOrganisasi := domain.StrukturOrganisasi{
-		KodeOpd:    kodeOpd,
-		Tahun:      tahun,
+		KodeOpd:    request.KodeOpd,
+		Tahun:      request.Tahun,
 		NipAtasan:  request.NipAtasan,
 		NipBawahan: request.NipBawahan,
 	}
 
-	// 6. simpan / update relasi
-	if err := service.strukturOrganisasiRepository.Create(ctx, tx, strukturOrganisasi); err != nil {
-		log.Printf("[ERROR] HubungkanRekin repo: %v", err)
+	if err = service.strukturOrganisasiRepository.Create(ctx, tx, strukturOrganisasi); err != nil {
 		return pkopd.PkOpdResponse{}, fmt.Errorf("gagal menghubungkan rekin")
 	}
 
-	// 6.1 Commit dulu
-	if err := tx.Commit(); err != nil {
-		return pkopd.PkOpdResponse{}, err
+	if err = tx.Commit(); err != nil {
+		return
 	}
 
-	// 7. return FULL RESPONSE TERBARU
-	return service.FindByKodeOpdTahun(ctx, kodeOpd, tahun)
+	return service.FindByKodeOpdTahun(ctx, request.KodeOpd, request.Tahun)
 }
 
 func translateJenisItem(level int) string {

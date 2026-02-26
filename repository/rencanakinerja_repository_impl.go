@@ -1377,6 +1377,7 @@ func (repository *RencanaKinerjaRepositoryImpl) FindRekinByFilters(ctx context.C
 		if !exists {
 			indikator = domain.Indikator{
 				Id:               indikatorId.String,
+				RencanaKinerjaId: rk.Id,
 				Indikator:        indikatorNama.String,
 				Tahun:            indikatorTahun.String,
 				RumusPerhitungan: formula,
